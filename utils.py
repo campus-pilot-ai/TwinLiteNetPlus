@@ -54,6 +54,15 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count if self.count != 0 else 0
 
+def pick_device():
+    """Select the best available torch device: CUDA > Apple MPS > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def poly_lr_scheduler(args, hyp, optimizer, epoch, power=1.5):
     lr = round(hyp['lr'] * (1 - epoch / args.max_epochs) ** power, 8)
     for param_group in optimizer.param_groups:
@@ -69,12 +78,15 @@ def train(args, train_loader, model, criterion, optimizer, epoch,scaler,verbose=
     if verbose:
         LOGGER.info(('\n' + '%13s' * 4) % ('Epoch','TverskyLoss','FocalLoss' ,'TotalLoss'))
         pbar = tqdm(pbar, total=total_batches, bar_format='{l_bar}{bar:10}{r_bar}')
+    amp_enabled = args.device.type == "cuda"
     for i, (_,input, target) in pbar:
         optimizer.zero_grad()
-        if args.onGPU == True:
-            input = input.cuda().float() / 255.0        
+        input = input.to(args.device).float() / 255.0
         output = model(input)
-        with torch.cuda.amp.autocast():
+        if amp_enabled:
+            with torch.cuda.amp.autocast():
+                focal_loss,tversky_loss,loss = criterion(output,target)
+        else:
             focal_loss,tversky_loss,loss = criterion(output,target)
 
         scaler.scale(loss).backward()
@@ -111,7 +123,7 @@ def val(val_loader = None, model = None, half = False, args=None):
     if args.verbose:
         pbar = tqdm(pbar, total=total_batches)
     for i, (_,input, target) in pbar:
-        input = input.cuda().half() / 255.0 if half else input.cuda().float() / 255.0
+        input = input.to(args.device).half() / 255.0 if half else input.to(args.device).float() / 255.0
         
         input_var = input
         target_var = target
@@ -183,7 +195,7 @@ def val_one(val_loader = None, model = None, half = False, args=None):
     if args.verbose:
         pbar = tqdm(pbar, total=total_batches)
     for i, (_,input, target) in pbar:
-        input = input.cuda().half() / 255.0 if half else input.cuda().float() / 255.0
+        input = input.to(args.device).half() / 255.0 if half else input.to(args.device).float() / 255.0
         
         input_var = input
         target_var = target

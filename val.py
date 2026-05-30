@@ -6,7 +6,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from model.model import TwinLiteNetPlus
-from utils import val, netParams
+from utils import val, netParams, pick_device
 from loss import TotalLoss
 import BDD100K
 
@@ -18,26 +18,28 @@ def validation(args):
     """
     
     # Initialize model
+    device = pick_device()
+    args.device = device
+    print(f'Using device: {device}')
     model = TwinLiteNetPlus(args)
-    cuda_available = torch.cuda.is_available()
-    if cuda_available:
-        model = model.cuda()
+    model = model.to(device)
+    if device.type == "cuda":
         cudnn.benchmark = True
-    
+
     # Load hyperparameters from YAML file
     with open(args.hyp, errors='ignore') as f:
         hyp = yaml.safe_load(f)
-    
+
     # Create validation data loader
     valLoader = torch.utils.data.DataLoader(
         BDD100K.Dataset(hyp, valid=True),
-        batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
-    
+        batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=(device.type == "cuda"))
+
     # Print model parameter count
     print(f'Total network parameters: {netParams(model)}')
-    
+
     # Load pretrained weights
-    model.load_state_dict(torch.load(args.weight))
+    model.load_state_dict(torch.load(args.weight, map_location=device))
     model.eval()
     
     # Perform validation

@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 
 from model.model import TwinLiteNetPlus
 from loss import TotalLoss
-from utils import train, val, netParams, save_checkpoint, poly_lr_scheduler
+from utils import train, val, netParams, save_checkpoint, poly_lr_scheduler, pick_device
 import BDD100K
 
 class ModelEMA:
@@ -35,28 +35,40 @@ class ModelEMA:
 def train_net(args, hyp):
     """Train the neural network model with given arguments and hyperparameters"""
     use_ema = args.ema
-    cuda_available = torch.cuda.is_available()
-    num_gpus = torch.cuda.device_count()
-    
+    device = pick_device()
+    args.device = device
+    args.onGPU = device.type != "cpu"
+    print(f'Using device: {device}')
+
     model = TwinLiteNetPlus(args)
-    # if num_gpus > 1:
+    # if torch.cuda.device_count() > 1:
     #     model = torch.nn.DataParallel(model)
-    
+
     os.makedirs(args.savedir, exist_ok=True)  # Ensure save directory exists
-    
+
+    pin = device.type == "cuda"  # pin_memory only helps CUDA host->device copies
     trainLoader = torch.utils.data.DataLoader(
         BDD100K.Dataset(hyp, valid=False),
-        batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    
+        batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin)
+
     valLoader = torch.utils.data.DataLoader(
         BDD100K.Dataset(hyp, valid=True),
-        batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
-    
-    if cuda_available:
-        args.onGPU = True
-        model = model.cuda()
+        batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
+
+    model = model.to(device)
+    if device.type == "cuda":
         cudnn.benchmark = True
-    
+
+    # Fine-tune: load a bare state_dict (e.g. pretrained/medium.pth) before EMA/optimizer.
+    if args.pretrained and os.path.isfile(args.pretrained):
+        print(f"=> Loading pretrained weights '{args.pretrained}'")
+        state = torch.load(args.pretrained, map_location=device)
+        if isinstance(state, dict) and 'state_dict' in state:
+            state = state['state_dict']
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            print(f"   (missing={len(missing)} unexpected={len(unexpected)} keys)")
+
     print(f'Total network parameters: {netParams(model)}')
     
     criteria = TotalLoss(hyp)
@@ -70,7 +82,7 @@ def train_net(args, hyp):
     if args.resume and os.path.isfile(args.resume):
         if args.resume.endswith(".tar"):
             print(f"=> Loading checkpoint '{args.resume}'")
-            checkpoint = torch.load(args.resume)
+            checkpoint = torch.load(args.resume, map_location=device)
             start_epoch = checkpoint['epoch']
             model.load_state_dict(checkpoint['state_dict'])
             if use_ema:
@@ -81,7 +93,7 @@ def train_net(args, hyp):
         else:
             print(f"=> No valid checkpoint found at '{args.resume}'")
     
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
     
     for epoch in range(start_epoch, args.max_epochs):
         model_file_name = os.path.join(args.savedir, f'model_{epoch}.pth')
@@ -117,7 +129,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
     parser.add_argument('--savedir', default='./testv3', help='Directory to save the results')
     parser.add_argument('--hyp', type=str, default='./hyperparameters/twinlitev2_hyper.yaml', help='Path to hyperparameters YAML')
-    parser.add_argument('--resume', type=str, default='', help='Resume training from a checkpoint')
+    parser.add_argument('--resume', type=str, default='', help='Resume training from a checkpoint (.tar)')
+    parser.add_argument('--pretrained', type=str, default='', help='Load a bare state_dict (e.g. pretrained/medium.pth) for fine-tuning')
     parser.add_argument('--config', default='nano', help='Model configuration')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     parser.add_argument('--ema', action='store_true', help='Use Exponential Moving Average (EMA)')
