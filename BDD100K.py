@@ -169,11 +169,12 @@ class DatasetOneTask(torch.utils.data.Dataset):
         
         self.Tensor = transforms.ToTensor()
         self.valid=valid
+        data_root = os.environ.get('TLN_DATA_ROOT', '../bdd100k')
         if valid:
-            self.root='../bdd100k/images/val'
+            self.root=os.path.join(data_root, 'images/val')
             self.names=os.listdir(self.root)
         else:
-            self.root='../bdd100k/images/train'
+            self.root=os.path.join(data_root, 'images/train')
             self.names=os.listdir(self.root)
 
     def __len__(self):
@@ -269,11 +270,12 @@ class Dataset(torch.utils.data.Dataset):
         
         self.Tensor = transforms.ToTensor()
         self.valid=valid
+        data_root = os.environ.get('TLN_DATA_ROOT', '../bdd100k')
         if valid:
-            self.root='../bdd100k/images/val'
+            self.root=os.path.join(data_root, 'images/val')
             self.names=os.listdir(self.root)
         else:
-            self.root='../bdd100k/images/train'
+            self.root=os.path.join(data_root, 'images/train')
             self.names=os.listdir(self.root)
 
     def __len__(self):
